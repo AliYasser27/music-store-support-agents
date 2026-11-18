@@ -1,40 +1,40 @@
-"""End-to-end tests for the two required test cases (section 12 of the spec).
+"""End-to-end tests for the two required scenarios.
 
-These tests drive the full compiled graph, including LLM-backed sub-agents
-and the supervisor, so they require a valid OPENAI_API_KEY. They are
-skipped automatically if one is not configured.
+These drive the full compiled graph, including the LLM-backed sub-agents, so
+they need a valid ``GROQ_API_KEY``. They are marked ``e2e`` and excluded from
+CI with ``pytest -m "not e2e"``.
 """
 
 from __future__ import annotations
 
-import os
 import uuid
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Command
 
-requires_openai_key = pytest.mark.skipif(
-    not os.environ.get("OPENAI_API_KEY"),
-    reason="OPENAI_API_KEY not set; skipping LLM-backed end-to-end tests.",
+from src.config import get_settings
+
+requires_llm = pytest.mark.skipif(
+    not get_settings().has_llm_credentials,
+    reason="GROQ_API_KEY not set; skipping live LLM end-to-end tests.",
 )
+
+pytestmark = [pytest.mark.e2e, requires_llm]
 
 
 def _ai_text(result: dict) -> str:
-    texts = [
-        m.content
-        for m in result.get("messages", [])
-        if isinstance(m, AIMessage) and isinstance(m.content, str)
-    ]
-    return "\n".join(texts)
+    """Concatenate every AI message in the thread."""
+    return "\n".join(
+        message.content
+        for message in result.get("messages", [])
+        if isinstance(message, AIMessage) and isinstance(message.content, str)
+    )
 
 
-@requires_openai_key
-def test_case_1_verified_customer_both_routes() -> None:
-    from src.graph import graph
-
-    thread_id = f"test-{uuid.uuid4()}"
-    config = {"configurable": {"thread_id": thread_id}}
+def test_case_1_verified_customer_gets_both_answers(graph_and_store) -> None:
+    graph, _ = graph_and_store
+    config = {"configurable": {"thread_id": f"test-{uuid.uuid4()}"}}
 
     result = graph.invoke(
         {
@@ -51,38 +51,48 @@ def test_case_1_verified_customer_both_routes() -> None:
         config=config,
     )
 
-    # Should not need to interrupt for identity since the phone matches a
-    # known Chinook customer.
     assert "__interrupt__" not in result
-    assert result["customer_id"], "expected verification to resolve a customer_id"
+    assert result["customer_id"] == "1"
+    assert "rolling stones" in _ai_text(result).lower()
 
-    combined_text = _ai_text(result).lower()
-    assert "rolling stones" in combined_text or "voodoo lounge" in combined_text
 
-    # Follow-up turn: preference-based recommendation using long-term memory.
-    result2 = graph.invoke(
+def test_case_1_follow_up_uses_long_term_memory(graph_and_store) -> None:
+    graph, _ = graph_and_store
+    config = {"configurable": {"thread_id": f"test-{uuid.uuid4()}"}}
+
+    graph.invoke(
+        {
+            "messages": [
+                HumanMessage(
+                    content=(
+                        "My phone number is +55 (12) 3923-5555. What albums do "
+                        "you have by the Rolling Stones?"
+                    )
+                )
+            ]
+        },
+        config=config,
+    )
+    result = graph.invoke(
         {"messages": [HumanMessage(content="List some songs that match my preferences?")]},
         config=config,
     )
-    assert "__interrupt__" not in result2
-    follow_up_text = _ai_text(result2).lower()
-    assert len(follow_up_text) > 0
+
+    assert "__interrupt__" not in result
+    assert _ai_text(result).strip()
 
 
-@requires_openai_key
-def test_case_2_unverified_customer_triggers_interrupt() -> None:
-    from src.graph import graph
-
-    thread_id = f"test-{uuid.uuid4()}"
-    config = {"configurable": {"thread_id": thread_id}}
+def test_case_2_unverified_customer_is_interrupted_then_resumes(graph_and_store) -> None:
+    graph, _ = graph_and_store
+    config = {"configurable": {"thread_id": f"test-{uuid.uuid4()}"}}
 
     result = graph.invoke(
         {
             "messages": [
                 HumanMessage(
                     content=(
-                        "How much was my most recent purchase? What albums "
-                        "do you have by the Rolling Stones?"
+                        "How much was my most recent purchase? What albums do "
+                        "you have by the Rolling Stones?"
                     )
                 )
             ]
@@ -91,5 +101,11 @@ def test_case_2_unverified_customer_triggers_interrupt() -> None:
     )
 
     assert "__interrupt__" in result
-    question = result["__interrupt__"][0].value.get("question", "")
-    assert "customer id" in question.lower() or "phone" in question.lower() or "email" in question.lower()
+    question = result["__interrupt__"][0].value["question"].lower()
+    assert "customer id" in question or "phone" in question or "email" in question
+
+    resumed = graph.invoke(Command(resume="My customer id is 1"), config=config)
+
+    assert "__interrupt__" not in resumed
+    assert resumed["customer_id"] == "1"
+    assert _ai_text(resumed).strip()

@@ -1,8 +1,7 @@
 """Tests for the music catalog and invoice SQL tools.
 
-These tests only exercise SQL/tool logic against the real Chinook data
-(loaded in-memory over the network) -- they do not require an LLM or API
-key.
+These exercise real SQL against the in-memory Chinook database and need no LLM
+or API key.
 """
 
 from __future__ import annotations
@@ -19,57 +18,101 @@ from src.tools.music_tools import (
     get_tracks_by_artist,
 )
 
+CUSTOMER_WITH_INVOICES = "1"
+
 
 def test_get_albums_by_artist_rolling_stones() -> None:
     albums = get_albums_by_artist.invoke({"artist": "Rolling Stones"})
-    assert isinstance(albums, list)
-    assert len(albums) > 0
-    titles = {a["Title"] for a in albums}
-    assert any("Voodoo Lounge" in t or "Hot Rocks" in t or "No Security" in t for t in titles)
+
+    assert albums
+    titles = {album["Title"] for album in albums}
+    assert any("Voodoo Lounge" in title or "Hot Rocks" in title for title in titles)
+
+
+def test_get_albums_by_artist_is_case_insensitive() -> None:
+    upper = get_albums_by_artist.invoke({"artist": "ROLLING STONES"})
+    lower = get_albums_by_artist.invoke({"artist": "rolling stones"})
+
+    assert upper and upper == lower
 
 
 def test_get_tracks_by_artist_returns_rows() -> None:
     tracks = get_tracks_by_artist.invoke({"artist": "Rolling Stones"})
-    assert isinstance(tracks, list)
-    assert len(tracks) > 0
-    assert "TrackName" in tracks[0]
+
+    assert tracks
+    assert {"ArtistName", "AlbumTitle", "TrackName"} <= tracks[0].keys()
+
+
+def test_get_tracks_by_artist_falls_back_to_partial_name() -> None:
+    """A name that is not a substring still matches on its significant word."""
+    tracks = get_tracks_by_artist.invoke({"artist": "Stones Rolling"})
+
+    assert tracks
+    assert all(
+        "Stones" in track["ArtistName"] or "Stones" in track["AlbumTitle"] for track in tracks
+    )
 
 
 def test_get_songs_by_genre_rock() -> None:
     songs = get_songs_by_genre.invoke({"genre": "Rock"})
-    assert isinstance(songs, list)
-    assert len(songs) > 0
+
+    assert songs
+    assert all("Rock" in song["GenreName"] for song in songs)
 
 
 def test_check_for_songs_partial_match() -> None:
     results = check_for_songs.invoke({"song_title": "Love"})
-    assert isinstance(results, list)
-    assert len(results) > 0
+
+    assert results
+    assert all("love" in row["TrackName"].lower() for row in results)
+
+
+def _invoices_for(customer_id: str = CUSTOMER_WITH_INVOICES) -> list[dict]:
+    return get_invoices_by_customer_sorted_by_date.invoke({"customer_id": customer_id})
 
 
 def test_get_invoices_by_customer_sorted_by_date() -> None:
-    invoices = get_invoices_by_customer_sorted_by_date.invoke({"customer_id": "1"})
-    assert isinstance(invoices, list)
-    if len(invoices) > 1:
-        dates = [row["InvoiceDate"] for row in invoices]
-        assert dates == sorted(dates, reverse=True)
+    invoices = _invoices_for()
+
+    assert invoices
+    dates = [row["InvoiceDate"] for row in invoices]
+    assert dates == sorted(dates, reverse=True)
 
 
 def test_get_invoices_sorted_by_unit_price() -> None:
-    lines = get_invoices_sorted_by_unit_price.invoke({"customer_id": "1"})
-    assert isinstance(lines, list)
-    if len(lines) > 1:
-        prices = [float(row["UnitPrice"]) for row in lines]
-        assert prices == sorted(prices, reverse=True)
+    lines = get_invoices_sorted_by_unit_price.invoke({"customer_id": CUSTOMER_WITH_INVOICES})
+
+    assert lines
+    prices = [float(row["UnitPrice"]) for row in lines]
+    assert prices == sorted(prices, reverse=True)
 
 
 def test_get_employee_by_invoice_and_customer() -> None:
-    invoices = get_invoices_by_customer_sorted_by_date.invoke({"customer_id": "1"})
-    assert invoices, "expected customer 1 to have at least one invoice"
+    invoices = _invoices_for()
     invoice_id = str(invoices[0]["InvoiceId"])
+
     employee = get_employee_by_invoice_and_customer.invoke(
-        {"invoice_id": invoice_id, "customer_id": "1"}
+        {"invoice_id": invoice_id, "customer_id": CUSTOMER_WITH_INVOICES}
     )
-    assert isinstance(employee, dict)
-    if employee:
-        assert "FirstName" in employee and "Email" in employee
+
+    assert employee["FirstName"]
+    assert "@" in employee["Email"]
+
+
+def test_employee_lookup_rejects_another_customers_invoice() -> None:
+    """An invoice id alone must not leak data across customers."""
+    invoices = _invoices_for()
+    invoice_id = str(invoices[0]["InvoiceId"])
+
+    assert (
+        get_employee_by_invoice_and_customer.invoke(
+            {"invoice_id": invoice_id, "customer_id": "999999"}
+        )
+        == {}
+    )
+
+
+def test_artist_name_cannot_inject_sql() -> None:
+    """A quote in the search term is treated as data, not SQL."""
+    assert get_albums_by_artist.invoke({"artist": "'; DROP TABLE Album; --"}) == []
+    assert get_albums_by_artist.invoke({"artist": "Rolling Stones"})
