@@ -88,8 +88,8 @@ cd music-store-support-agents
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 
-pip install -r requirements.txt        # runtime only
-pip install -r requirements-dev.txt    # adds the notebook, ruff and pytest
+pip install -r requirements-dev.txt    # runtime + notebook, ruff and pytest
+# runtime only: pip install -r requirements.txt
 
 cp .env.example .env                   # then set GROQ_API_KEY
 ```
