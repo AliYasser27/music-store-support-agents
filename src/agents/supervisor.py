@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 from typing import Literal
 
 from langchain_core.messages import SystemMessage
 from pydantic import BaseModel, Field
 
+from src.config import ConfigurationError, get_settings
 from src.llm import get_llm
 from src.state import State
+
+logger = logging.getLogger(__name__)
 
 SUPERVISOR_SYSTEM_PROMPT = """You are the Supervisor for a digital music \
 store's customer support system. You do not answer questions yourself -- \
@@ -57,8 +61,15 @@ def build_supervisor_router():
         messages = [SystemMessage(content=system_text), *state["messages"]]
         try:
             return structured_llm.invoke(messages)
-        except Exception as exc:  # noqa: BLE001 - a routing failure must not crash the turn
-            print(f"[supervisor] routing call failed, defaulting to FINISH: {exc}")
+        except Exception as exc:  # noqa: BLE001 - degrade below, or re-raise config errors
+            status = getattr(exc, "status_code", None)
+            if status in (401, 403, 404):
+                raise ConfigurationError(
+                    f"Groq rejected the routing call ({status}) for model "
+                    f"{get_settings().model_name!r}. Check GROQ_API_KEY and MODEL_NAME, "
+                    "and that the model is enabled for your account."
+                ) from exc
+            logger.warning("routing call failed, defaulting to FINISH: %s", exc)
             return RouteDecision(
                 route="FINISH", reasoning="Routing call failed; ending turn safely."
             )

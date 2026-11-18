@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DEFAULT_MODEL_NAME = "llama-3.3-70b-versatile"
+DEFAULT_MODEL_NAME = "openai/gpt-oss-120b"
 DEFAULT_CHINOOK_SQL_URL = (
     "https://raw.githubusercontent.com/lerocha/chinook-database/"
     "master/ChinookDatabase/DataSources/Chinook_Sqlite.sql"
