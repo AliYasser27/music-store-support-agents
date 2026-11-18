@@ -1,0 +1,29 @@
+# Tooling configuration for the project.
+#
+# Runtime dependencies live in requirements.txt, development-only tools in
+# requirements-dev.txt. Keeping dependency lists out of this file means there
+# is exactly one place to look for installable packages.
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RET", "ARG"]
+ignore = [
+    "ARG001", # unused function arguments are required by LangGraph node signatures
+    "ARG002", # unused method arguments, same reason
+    "RET504", # unnecessary assignment before return is often clearer for debugging
+    "SIM108", # ternaries are not always more readable
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ARG001"]
+"music_store_customer_support.ipynb" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "e2e: end-to-end tests that call a live LLM and require GROQ_API_KEY",
+]
