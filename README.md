@@ -12,15 +12,15 @@ A supervisor agent routes each message to a music-catalog specialist, an invoice
 
 ## Demo
 
-> A 60-second screen recording covering all three scenarios below lives at
-> `docs/demo/demo.gif` and is embedded here once uploaded. Recording notes and
-> the shot list are in [`docs/demo/README.md`](docs/demo/README.md).
+![Terminal demo: an unverified request triggers an identity interrupt, the verified request is answered by both specialists, and a follow-up is answered from long-term memory](docs/demo/demo.gif)
 
-The recording shows, in order:
+Three moments from a live session, in the order they appear:
 
-1. **Verified request** — the caller gives a phone number, and a single message asking about a recent purchase *and* Rolling Stones albums is answered by both specialists and merged into one reply.
-2. **Memory recall** — the next turn asks for songs matching "my preferences"; the answer is built from the preferences stored in turn 1.
-3. **Unverified request** — a new session asks the same question without credentials; the graph pauses, asks for a customer ID, then resumes and answers.
+1. **Unverified request.** The customer asks about a purchase and Rolling Stones albums without credentials. `verify_customer` resolves nothing, so the graph interrupts and asks for a Customer ID, phone, or email.
+2. **Verified request.** The phone number resolves to a Chinook customer, the supervisor routes to `both`, and the merged answer contains the most recent invoice amount and the matching albums.
+3. **Memory recall.** The follow-up — *"List some songs that match my preferences?"* — names no artist. The music specialist answers from the preference summary saved at the end of the previous turn.
+
+The GIF is a 75-second cut of a longer walkthrough; the full recording is available on request.
 
 ---
 
