@@ -1,262 +1,227 @@
-# Music Store Customer Support Multi-Agent System
+# Music Store Support Agents
 
-A production-quality customer support system for a digital music store,
-built with **LangChain**, **LangGraph**, and **Jupyter Notebook**, backed by
-the **Chinook** SQLite database (loaded entirely in-memory, no external DB
-setup required).
+A multi-agent customer support assistant for a digital music store, built with **LangGraph** and **LangChain**, backed by the [Chinook](https://github.com/lerocha/chinook-database) SQLite database.
 
-A **Supervisor** agent routes each customer message to one or both of two
-specialist sub-agents:
+A supervisor agent routes each message to a music-catalog specialist, an invoice specialist, or both. The workflow verifies the caller's identity before any account data is read, personalises recommendations from long-term memory, and pauses mid-conversation to ask for credentials or missing details — resuming exactly where it stopped.
 
-- **Music Catalog Sub-Agent** — albums, tracks, genres, recommendations.
-- **Invoice Information Sub-Agent** — invoices, purchase history, support
-  employee lookups.
-
-The system verifies the customer's identity before answering anything
-sensitive, remembers music preferences across sessions (long-term memory),
-and keeps `customer_id` + conversation context for the life of a session
-(short-term memory), including across human-in-the-loop pauses.
+[![CI](https://github.com/AliYasser27/music-store-support-agents/actions/workflows/ci.yml/badge.svg)](https://github.com/AliYasser27/music-store-support-agents/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
-## 1. Architecture
+## Demo
 
-```
-                              +-------------------+
-                 START -----> |  verify_customer  |----(interrupt: ask for
-                              |  (HITL if needed) |     Customer ID/Phone/
-                              +---------+----------+     Email, then resume)
-                                        |
-                                        v
-                              +-------------------+
-                              |    load_memory     |  (reads long-term prefs
-                              |                     |   from InMemoryStore)
-                              +---------+----------+
-                                        |
-                                        v
-                              +-------------------+
-                              |     supervisor      |  (structured routing:
-                              |                     |   music_catalog /
-                              +----+-----+-----+----+   invoice_info / both
-                                   |     |     |         / FINISH)
-                    music_catalog  |     |     |  FINISH
-                                   v     |     +----------------> END
-                        +-------------+  |
-                        |music_catalog|  | invoice_info
-                        |  sub-agent  |  v
-                        +------+------+ +--------------+
-                               |        | invoice_info  |
-                     (route == |        |  sub-agent    |
-                      "both")  |        +-------+-------+
-                               v                |
-                        +-------------+         |
-                        | invoice_info|<--------+ (route == "both")
-                        |  sub-agent  |
-                        +------+------+
-                               |
-                     (route=="both")
-                               v
-                        +-------------+
-                        | synthesize  |  (merge both replies)
-                        +------+------+
-                               |
-                               v
-                        +-------------+
-                        | save_memory |  (extract & persist prefs
-                        +------+------+   into InMemoryStore)
-                               |
-                               v
-                              END
-```
+> A 60-second screen recording covering all three scenarios below lives at
+> `docs/demo/demo.gif` and is embedded here once uploaded. Recording notes and
+> the shot list are in [`docs/demo/README.md`](docs/demo/README.md).
 
-Both the Music Catalog and Invoice Information sub-agents are built with
-LangGraph's `create_react_agent` prebuilt, bound to their own tool sets, and
-can each pause the whole graph via `interrupt()` if a tool call is missing a
-required argument (e.g. no artist name, no invoice ID) — the user is asked
-for the missing detail and the tool call resumes with it.
+The recording shows, in order:
 
-## 2. Project structure
+1. **Verified request** — the caller gives a phone number, and a single message asking about a recent purchase *and* Rolling Stones albums is answered by both specialists and merged into one reply.
+2. **Memory recall** — the next turn asks for songs matching "my preferences"; the answer is built from the preferences stored in turn 1.
+3. **Unverified request** — a new session asks the same question without credentials; the graph pauses, asks for a customer ID, then resumes and answers.
 
-```
-music_store_support/
-├── requirements.txt
-├── .env.example
-├── README.md
-├── music_store_customer_support.ipynb
-├── src/
-│   ├── __init__.py
-│   ├── db.py                  # Chinook engine + SQLDatabase (in-memory)
-│   ├── llm.py                 # shared ChatOpenAI construction
-│   ├── state.py                # graph State schema
-│   ├── tools/
-│   │   ├── __init__.py
-│   │   ├── music_tools.py      # get_albums_by_artist, get_tracks_by_artist, ...
-│   │   └── invoice_tools.py    # get_invoices_by_customer_sorted_by_date, ...
-│   ├── agents/
-│   │   ├── __init__.py
-│   │   ├── music_agent.py      # Music Catalog Sub-Agent (create_react_agent)
-│   │   ├── invoice_agent.py    # Invoice Information Sub-Agent
-│   │   └── supervisor.py       # structured-output routing decision
-│   ├── nodes/
-│   │   ├── __init__.py
-│   │   ├── verify_customer.py  # identity parsing + HITL interrupt loop
-│   │   ├── memory.py           # load_memory / save_memory (long-term store)
-│   │   └── hitl.py             # shared interrupt() helpers
-│   ├── graph.py                 # builds & compiles the StateGraph
-│   └── run.py                   # interactive loop + demo runner
-└── tests/
-    ├── test_tools.py
-    ├── test_verification.py
-    └── test_e2e.py
+---
+
+## What it does
+
+| Capability | Implementation |
+|---|---|
+| **Identity verification** | Accepts a customer ID, email, or phone number; normalises phone formats and resolves it against `Customer` before any account data is read. |
+| **Supervisor routing** | Pydantic-typed structured output choosing `music_catalog`, `invoice_info`, `both`, or `FINISH` per message. |
+| **Music specialist** | ReAct agent with four catalog tools (albums, tracks, genre, song search), bound to real SQL queries. |
+| **Invoice specialist** | ReAct agent with three tools (invoices by date, line items by price, support rep for an invoice), scoped to the verified customer. |
+| **Human in the loop** | `interrupt()` / `Command(resume=...)` for missing credentials *and* missing tool arguments, with state preserved across pauses by a checkpointer. |
+| **Long-term memory** | Per-customer preference summary in an `InMemoryStore`, written by a structured-output extraction step at the end of each turn and injected into both specialists' prompts. |
+| **Short-term memory** | `customer_id` and full message history keyed by `thread_id`, so nothing is re-asked within a session. |
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TD
+    START([START]) --> VERIFY[verify_customer]
+    VERIFY -- "identity resolved" --> MEM_IN[load_memory]
+    VERIFY -. "interrupt: ask for<br/>ID / phone / email" .-> VERIFY
+
+    MEM_IN --> SUP{supervisor}
+
+    SUP -- music_catalog --> MUSIC[music_catalog<br/>ReAct agent]
+    SUP -- invoice_info --> INVOICE[invoice_info<br/>ReAct agent]
+    SUP -- both --> MUSIC
+    SUP -- FINISH --> END([END])
+
+    MUSIC -- "route == both" --> INVOICE
+    MUSIC -- "otherwise" --> MEM_OUT[save_memory]
+    INVOICE -- "route == both" --> SYNTH[synthesize]
+    INVOICE -- "otherwise" --> MEM_OUT
+    SYNTH --> MEM_OUT
+    MEM_OUT --> END
 ```
 
-## 3. Setup
+<details>
+<summary><strong>Node responsibilities</strong></summary>
 
-**Requirements:** Python 3.10+, and internet access on first run (to
-download the Chinook SQL script — no local database installation needed).
+- **`verify_customer`** — extracts an identity from the latest message and resolves it to a `CustomerId`. Loops on an interrupt until it succeeds.
+- **`load_memory`** — reads the customer's stored preference summary into `loaded_memory`.
+- **`supervisor`** — one structured LLM call. Returns a route plus a one-sentence justification, which is logged.
+- **`music_catalog` / `invoice_info`** — prebuilt ReAct agents, each with its own tools and prompt.
+- **`synthesize`** — only on the `both` route: merges the two answers into one reply. Best-effort; if it fails, the individual answers stand.
+- **`save_memory`** — extracts durable preferences from the recent turns and updates the store.
+
+</details>
+
+Deeper notes — state schema, turn-by-turn trace of a `both` request, and failure behaviour — are in [`docs/architecture.md`](docs/architecture.md).
+
+---
+
+## Quickstart
+
+**Requires:** Python 3.10+ and internet access on first run (the Chinook script is downloaded once per process and loaded into memory — there is no database to install).
 
 ```bash
-# 1. Create and activate a virtual environment
+git clone https://github.com/AliYasser27/music-store-support-agents.git
+cd music-store-support-agents
+
 python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 
-# 2. Install dependencies
-pip install -r requirements.txt
+pip install -r requirements.txt        # runtime only
+pip install -r requirements-dev.txt    # adds the notebook, ruff and pytest
 
-# 3. Configure your API key
-cp .env.example .env
-# then edit .env and set OPENAI_API_KEY=sk-...
+cp .env.example .env                   # then set GROQ_API_KEY
 ```
 
-> **Note:** No external database setup is required. The Chinook database is
-> downloaded as a `.sql` script and loaded into an in-memory SQLite
-> connection automatically the first time `src/db.py` is imported.
-> Internet access is required for this download on first run.
+Get a free key at [console.groq.com/keys](https://console.groq.com/keys). The system uses Groq because it is free to evaluate and fast enough for multi-agent tool loops.
 
-## 4. Running
-
-### Jupyter notebook (recommended for exploring the system)
+### Run the scripted scenarios
 
 ```bash
-jupyter lab music_store_customer_support.ipynb
-# or
-jupyter notebook music_store_customer_support.ipynb
+python -m src.run --demo
 ```
 
-Run all cells top-to-bottom. The notebook prints the Chinook table list,
-walks through every component, and runs both required test cases with
-their outputs.
+This runs the two acceptance scenarios without manual input and prints the routing decisions alongside the answers.
 
-### CLI demo (non-interactive, runs the two required test cases)
+### Chat interactively
 
 ```bash
 python -m src.run
 ```
 
-### CLI interactive loop
+Type `quit` to exit. Reuse `--thread my-session` to resume a named session.
 
-```python
-from src.run import run_conversation
-run_conversation(thread_id="my-session-1")
+### Run the notebook
+
+```bash
+jupyter lab music_store_customer_support.ipynb
 ```
 
-Type your messages at the `You:` prompt. When the assistant needs more
-information (identity verification or a missing detail like an artist
-name), it will print a prompt and wait for your reply, then resume
-automatically.
+The notebook is a guided walkthrough: it inspects the database and graph, exercises the tools, and drives both scenarios with explanations between steps.
 
 ### Tests
 
 ```bash
-pytest -q
+pytest -m "not e2e"    # offline: tools, verification, memory, HITL, graph wiring
+pytest                 # adds the live-LLM scenarios (needs GROQ_API_KEY)
 ```
 
-- `test_tools.py` and `test_verification.py` only need internet access (to
-  load Chinook) — no API key required.
-- `test_e2e.py` drives the full LLM-backed graph and is automatically
-  skipped if `OPENAI_API_KEY` is not set.
+---
 
-## 5. Agents & tools
+## Testing approach
 
-### Music Catalog Sub-Agent (`src/agents/music_agent.py`)
+The suite is split by what it needs, so CI never depends on a paid or rate-limited API:
 
-- `get_albums_by_artist(artist)` — albums by an artist (partial match).
-- `get_tracks_by_artist(artist)` — tracks by an artist, with a fallback to
-  a broader word-based search if no exact/partial match is found.
-- `get_songs_by_genre(genre)` — songs in a genre.
-- `check_for_songs(song_title)` — partial, case-insensitive title search.
+| Suite | Covers | Needs API key |
+|---|---|---|
+| `test_tools.py` | Every SQL tool against real Chinook data, sort order, cross-customer isolation, SQL-injection safety | No |
+| `test_verification.py` | ID / email / phone resolution, normalisation, unknown identities | No |
+| `test_memory.py` | Per-customer preference isolation and default behaviour | No |
+| `test_hitl.py` | `interrupt()` → `Command(resume=...)` contract in a minimal graph | No |
+| `test_graph_structure.py` | Node/edge wiring, conditional routing, import without credentials | No |
+| `test_e2e.py` | The two acceptance scenarios end to end (marked `e2e`) | Yes |
 
-Personalizes answers using `state["loaded_memory"]` (the customer's known
-preferences).
+LLM clients are created lazily, so importing the graph and building it in CI costs nothing. That is deliberately what `test_graph_builds_without_api_key` protects.
 
-### Invoice Information Sub-Agent (`src/agents/invoice_agent.py`)
+---
 
-- `get_invoices_by_customer_sorted_by_date(customer_id)` — invoices, newest
-  first.
-- `get_invoices_sorted_by_unit_price(customer_id)` — invoice line items,
-  most expensive first.
-- `get_employee_by_invoice_and_customer(invoice_id, customer_id)` — the
-  support rep tied to an invoice (`Customer.SupportRepId -> Employee`).
+## Design decisions
 
-Always uses the verified `customer_id` from short-term state — never asks
-the customer to repeat it.
+**Supervisor as a router, not an answerer.** The supervisor only classifies; it never sees the tools. That keeps the routing prompt small and makes a wrong route a one-line fix rather than a prompt rewrite.
 
-### Supervisor (`src/agents/supervisor.py`)
+**`both` is an explicit route, not an agent loop.** When a message needs two specialists, the graph runs them in a fixed order and merges the results, so latency and failure mode are predictable — no agent deciding when another agent is "done".
 
-Uses a Pydantic-typed structured output (`RouteDecision`) to choose exactly
-one of `"music_catalog"`, `"invoice_info"`, `"both"`, or `"FINISH"` for the
-latest message, informed by the customer's loaded long-term preferences.
+**Interrupts live inside the tools.** Missing arguments are a tool-level concern, so the tool asks for what it needs and the resumed value becomes the argument. The alternative — pre-validating every argument in the supervisor — would duplicate each tool's signature in the prompt.
 
-All SQL in every tool uses SQLAlchemy bound parameters (`:name`-style) —
-user input is never concatenated into SQL text.
+**The verified ID is passed, never re-asked.** The invoice prompt contains the resolved `CustomerId`, and the employee-lookup query filters on it too. A customer cannot read another customer's support-rep details by guessing an invoice number.
 
-## 6. Human-in-the-loop (HITL) behavior
+**Bound parameters everywhere.** Every query is a SQLAlchemy `text()` statement with `:named` parameters. `test_artist_name_cannot_inject_sql` asserts it.
 
-Two independent interrupt scenarios are implemented with
-`langgraph.types.interrupt()` / `Command(resume=...)`:
+**Failures degrade instead of crashing.** Routing falls back to `FINISH`, synthesis falls back to the two separate answers, and memory extraction is skipped on error — each logged at `WARNING`. A support bot that drops a turn is worse than one that answers slightly worse.
 
-1. **Identity verification** (`verify_customer` node): if the latest
-   message doesn't contain a resolvable Customer ID, phone, or email, the
-   graph interrupts and asks: *"Please provide your Customer ID, Phone, or
-   Email so I can verify your identity."* Phone numbers are normalized
-   (spaces, parentheses, dashes, and a leading `+` are stripped) before
-   matching against `Customer.Phone`. On resume, verification is retried;
-   if it still fails, the graph interrupts again.
+---
 
-2. **Missing tool arguments** (music/invoice tools): if the LLM calls a
-   tool with a blank required argument (e.g. no artist name given), the
-   tool itself calls `interrupt()` to ask a targeted clarifying question
-   (e.g. *"Which artist would you like albums for?"*), then uses the
-   resumed reply as the argument value and completes the lookup.
+## Project structure
 
-Because the graph is compiled with `InMemorySaver()` as the checkpointer,
-`state["customer_id"]` and the full message history survive across any
-number of interrupt/resume cycles within the same `thread_id`.
+```
+music-store-support-agents/
+├── src/
+│   ├── config.py            # env-driven settings (single source of configuration)
+│   ├── db.py                # Chinook download + in-memory SQLite engine
+│   ├── llm.py               # cached ChatGroq factory
+│   ├── state.py             # shared graph state schema
+│   ├── graph.py             # node wiring, conditional edges, compiled graph
+│   ├── run.py               # CLI: scripted demo and interactive session
+│   ├── agents/              # supervisor + two ReAct specialists
+│   ├── nodes/               # verification, memory, HITL prompt helpers
+│   └── tools/               # music and invoice SQL tools
+├── tests/                   # offline suite + gated e2e suite
+├── docs/                    # architecture notes and demo assets
+├── music_store_customer_support.ipynb
+├── Makefile                 # make setup / lint / test / demo
+└── .github/workflows/ci.yml # ruff + offline tests on every push
+```
 
-## 7. Long-term memory
+`make help` lists the available targets.
 
-`langgraph.store.memory.InMemoryStore` holds a per-customer preferences
-summary under the namespace `("customer", customer_id, "preferences")`.
+---
 
-- `load_memory` reads this summary into `state["loaded_memory"]` at the
-  start of every turn, and it's injected into both sub-agents' prompts.
-- `save_memory` runs at the end of every turn: a small structured-output
-  LLM call scans the recent conversation for concrete artist/genre/song
-  preferences, merges them with whatever was already stored (deduplicated,
-  kept concise), and writes the result back.
+## Configuration
 
-## 8. Known limitations
+All settings are optional except the API key. See `.env.example`.
 
-- Phone-number matching uses normalization + a same-length or 9-digit
-  suffix comparison; unusual international formats not present in Chinook
-  may not resolve.
-- The `synthesize` step for `"both"` routing does a single extra LLM call
-  to merge sub-agent replies; if that call fails, the two sub-agent replies
-  are still present in the message history and used as-is (synthesis is
-  best-effort, not required for correctness).
-- Long-term memory (`InMemoryStore`) and short-term memory
-  (`InMemorySaver`) are both **process-local and non-persistent** — restart
-  the Python process/kernel and all memory is lost. Swap in a persistent
-  store/checkpointer (e.g. Postgres-backed) for production use.
-- The Chinook data is fetched fresh from GitHub on every process start;
-  without internet access on first run, the system cannot start.
+| Variable | Default | Purpose |
+|---|---|---|
+| `GROQ_API_KEY` | — | **Required.** Groq API key. |
+| `MODEL_NAME` | `llama-3.3-70b-versatile` | Any Groq model that supports tool calling. |
+| `CHINOOK_SQL_URL` | official Chinook SQL script | Override to use a local mirror. |
+| `CHINOOK_HTTP_TIMEOUT` | `30` | Download timeout in seconds. |
+
+---
+
+## Limitations and next steps
+
+This is a reference implementation, and the honest list of what it is *not*:
+
+- **Memory is process-local.** `InMemorySaver` and `InMemoryStore` lose everything on restart. Production would use the Postgres checkpointer and store, keyed by customer rather than thread.
+- **Identity verification is weak.** Knowing a customer's phone number is not authentication. A real deployment needs a one-time code or session token, and audit logging on every lookup.
+- **Phone matching is heuristic.** It normalises separators and compares the last nine digits; unusual international formats may not resolve.
+- **No evaluation harness.** Routing accuracy is currently judged by the e2e tests, not measured over a labelled set. A small prompt-regression suite with per-route assertions is the obvious next step.
+- **The database is re-downloaded per process.** Fine for a demo, wasteful for anything deployed; the data should be baked into the image.
+- **LLM calls are not traced.** Adding LangSmith (or OpenTelemetry) tracing would make routing quality and latency observable per turn.
+
+---
+
+## Context
+
+Built as the final project of a GenAI engineering course, then hardened for use as a portfolio piece: lazy client construction, a CI pipeline that runs without credentials, tests for the interrupt/resume contract, and the documentation above. The original project brief is summarised in [`docs/architecture.md`](docs/architecture.md#project-brief).
+
+## Acknowledgments
+
+- [Chinook sample database](https://github.com/lerocha/chinook-database) (MIT) for the data model and SQL script.
+- The LangGraph team for the `interrupt`, checkpointer, and store primitives this project is built on.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
