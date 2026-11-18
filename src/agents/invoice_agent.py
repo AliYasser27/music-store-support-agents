@@ -1,11 +1,13 @@
 """Invoice Information Sub-Agent.
 
-A ReAct-style agent (LangGraph prebuilt) bound to the invoice tools. It has
-access to the verified ``customer_id`` from short-term (graph) state, so it
-never needs to ask the customer to repeat their identity.
+A ReAct-style agent bound to the invoice tools. It reads the verified
+``customer_id`` from graph state and puts it in the system prompt, so the
+customer never has to repeat their identity mid-conversation.
 """
 
 from __future__ import annotations
+
+from functools import lru_cache
 
 from langchain_core.messages import SystemMessage
 from langgraph.prebuilt import create_react_agent
@@ -41,18 +43,15 @@ def _build_prompt(state: State):
     """Build the message list for the invoice agent, injecting customer_id."""
     customer_id = state.get("customer_id") or "UNKNOWN"
     system_text = INVOICE_AGENT_SYSTEM_PROMPT.format(customer_id=customer_id)
-    return [SystemMessage(content=system_text)] + state["messages"]
+    return [SystemMessage(content=system_text), *state["messages"]]
 
 
-def build_invoice_agent():
-    """Construct the Invoice Information Sub-Agent as a compiled LangGraph agent."""
-    llm = get_llm()
+@lru_cache(maxsize=1)
+def get_invoice_agent():
+    """Return the compiled Invoice Information Sub-Agent (built on first use)."""
     return create_react_agent(
-        llm,
+        get_llm(),
         tools=INVOICE_TOOLS,
         prompt=_build_prompt,
         state_schema=State,
     )
-
-
-invoice_agent = build_invoice_agent()

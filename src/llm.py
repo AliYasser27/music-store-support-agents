@@ -1,37 +1,42 @@
-"""Shared LLM configuration.
+"""LLM construction.
 
-Centralizing model construction here makes it easy to swap providers
-without touching every agent module. Currently configured for **Groq**.
+A single factory is used everywhere so that the provider can be swapped in one
+place. The client is built lazily (on first use) and cached, which means
+importing any module -- including the graph -- never requires an API key. That
+is what allows the offline test suite (and CI) to run without credentials.
 """
 
 from __future__ import annotations
 
-import os
+from functools import lru_cache
 
-from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 
-load_dotenv()
-
-DEFAULT_MODEL_NAME = os.environ.get("MODEL_NAME", "llama-3.3-70b-versatile")
+from src.config import ConfigurationError, get_settings
 
 
+@lru_cache(maxsize=8)
 def get_llm(temperature: float = 0.0, model_name: str | None = None) -> ChatGroq:
-    """Construct a ChatGroq instance.
+    """Return a cached ``ChatGroq`` client.
 
     Args:
-        temperature: Sampling temperature. Defaults to 0 for deterministic,
-            support-oriented responses.
-        model_name: Optional override of the default model name. Falls back
-            to the MODEL_NAME env var, then "llama-3.3-70b-versatile".
+        temperature: Sampling temperature. The default of 0 keeps
+            support answers deterministic and repeatable.
+        model_name: Optional override of the configured model name.
 
     Returns:
-        A configured ChatGroq instance. Reads the API key from the
-        GROQ_API_KEY environment variable.
+        A configured ``ChatGroq`` client.
+
+    Raises:
+        ConfigurationError: If ``GROQ_API_KEY`` is not set.
     """
-    if not os.environ.get("GROQ_API_KEY"):
-        raise EnvironmentError(
-            "GROQ_API_KEY is not set. Copy .env.example to .env and set "
-            "your key, or export it in your shell before running."
+    settings = get_settings()
+    if not settings.has_llm_credentials:
+        raise ConfigurationError(
+            "GROQ_API_KEY is not set. Copy .env.example to .env and add your key, "
+            "or export GROQ_API_KEY in your shell."
         )
-    return ChatGroq(model=model_name or DEFAULT_MODEL_NAME, temperature=temperature)
+    return ChatGroq(
+        model=model_name or settings.model_name,
+        temperature=temperature,
+    )

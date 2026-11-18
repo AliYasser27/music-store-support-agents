@@ -1,11 +1,10 @@
-"""Chinook database loader.
+"""Chinook database access.
 
-Loads the Chinook SQLite database entirely in-memory by downloading the
-official SQL creation script and executing it against an in-memory SQLite
-connection. This avoids the need for any external database setup.
-
-NOTE: The helper function below is used exactly as specified by the
-project requirements and must not have its behavior modified.
+The Chinook sample database is downloaded as a SQL script and loaded into an
+in-memory SQLite connection, so the project needs no database server and no
+setup step. The module exposes one shared ``engine`` used by every tool and
+node; keeping a single engine is what makes the in-memory data visible
+everywhere.
 """
 
 from __future__ import annotations
@@ -13,26 +12,45 @@ from __future__ import annotations
 import sqlite3
 
 import requests
-from langchain_community.utilities.sql_database import SQLDatabase
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.pool import StaticPool
+
+from src.config import get_settings
+
+
+class DatabaseLoadError(RuntimeError):
+    """Raised when the Chinook script cannot be downloaded or executed."""
+
+
+def _download_chinook_sql() -> str:
+    """Fetch the Chinook DDL/DML script used to populate the database."""
+    settings = get_settings()
+    try:
+        response = requests.get(settings.chinook_sql_url, timeout=settings.chinook_http_timeout)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise DatabaseLoadError(
+            "Could not download the Chinook database script from "
+            f"{settings.chinook_sql_url}. The first run needs internet access. "
+            f"Original error: {exc}"
+        ) from exc
+    return response.text
 
 
 def get_engine_for_chinook_db():
-    """Download the Chinook SQL script and load it into an in-memory SQLite DB.
+    """Build an in-memory SQLite engine populated with the Chinook dataset.
 
     Returns:
-        A SQLAlchemy Engine backed by a single shared in-memory SQLite
-        connection (via StaticPool) so that all sessions see the same data.
+        A SQLAlchemy engine backed by one shared in-memory connection (via
+        ``StaticPool``), so every session sees the same data.
     """
-    url = (
-        "https://raw.githubusercontent.com/lerocha/chinook-database/"
-        "master/ChinookDatabase/DataSources/Chinook_Sqlite.sql"
-    )
-    response = requests.get(url)
-    sql_script = response.text
-    connection = sqlite3.connect(":memory:", check_same_thread=False)
-    connection.executescript(sql_script)
+    sql_script = _download_chinook_sql()
+    try:
+        connection = sqlite3.connect(":memory:", check_same_thread=False)
+        connection.executescript(sql_script)
+    except sqlite3.Error as exc:
+        raise DatabaseLoadError(f"Failed to load the Chinook dataset: {exc}") from exc
+
     return create_engine(
         "sqlite://",
         creator=lambda: connection,
@@ -41,17 +59,20 @@ def get_engine_for_chinook_db():
     )
 
 
-# Module-level singletons so every part of the app shares the same
-# in-memory database instance.
+# Shared singleton: every tool and node queries the same in-memory database.
 engine = get_engine_for_chinook_db()
-db = SQLDatabase(engine)
+
+
+def get_table_names() -> list[str]:
+    """Return the sorted list of tables available in the Chinook database."""
+    return sorted(inspect(engine).get_table_names())
 
 
 def print_table_list() -> list[str]:
-    """Print and return the list of tables available in the Chinook DB."""
-    tables = db.get_usable_table_names()
-    print("Chinook tables available:", sorted(tables))
-    return sorted(tables)
+    """Print and return the Chinook table names (used by the notebook)."""
+    tables = get_table_names()
+    print("Chinook tables available:", tables)
+    return tables
 
 
 if __name__ == "__main__":

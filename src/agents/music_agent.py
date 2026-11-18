@@ -1,10 +1,13 @@
 """Music Catalog Sub-Agent.
 
-A ReAct-style agent (LangGraph prebuilt) bound to the music catalog tools.
-It personalizes recommendations using ``state["loaded_memory"]``.
+A ReAct-style agent (LangGraph's ``create_react_agent``) bound to the music
+catalog tools. The system prompt is rebuilt per turn so the customer's
+long-term preferences can be injected for personalization.
 """
 
 from __future__ import annotations
+
+from functools import lru_cache
 
 from langchain_core.messages import SystemMessage
 from langgraph.prebuilt import create_react_agent
@@ -40,18 +43,15 @@ def _build_prompt(state: State):
     """Build the message list for the music agent, injecting long-term memory."""
     loaded_memory = state.get("loaded_memory") or "No preferences on file yet."
     system_text = MUSIC_AGENT_SYSTEM_PROMPT.format(loaded_memory=loaded_memory)
-    return [SystemMessage(content=system_text)] + state["messages"]
+    return [SystemMessage(content=system_text), *state["messages"]]
 
 
-def build_music_agent():
-    """Construct the Music Catalog Sub-Agent as a compiled LangGraph agent."""
-    llm = get_llm()
+@lru_cache(maxsize=1)
+def get_music_agent():
+    """Return the compiled Music Catalog Sub-Agent (built on first use)."""
     return create_react_agent(
-        llm,
+        get_llm(),
         tools=MUSIC_TOOLS,
         prompt=_build_prompt,
         state_schema=State,
     )
-
-
-music_agent = build_music_agent()

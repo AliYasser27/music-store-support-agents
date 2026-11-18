@@ -1,8 +1,8 @@
-"""Graph state schema shared across all nodes and sub-agents."""
+"""Graph state schema shared by every node and sub-agent."""
 
 from __future__ import annotations
 
-from typing import Annotated, Optional
+from typing import Annotated
 
 from langgraph.graph.message import AnyMessage, add_messages
 from langgraph.managed.is_last_step import RemainingSteps
@@ -14,17 +14,15 @@ class State(TypedDict):
 
     Attributes:
         customer_id: The verified Chinook CustomerId for this session.
-            Empty string until verification succeeds.
-        messages: Full conversation history (auto-merged via add_messages).
-        loaded_memory: A short natural-language summary of the customer's
-            long-term music preferences, injected into agent prompts.
+            Empty until verification succeeds.
+        messages: Full conversation history, merged via ``add_messages``.
+        loaded_memory: Summary of the customer's long-term music preferences,
+            injected into the sub-agent prompts.
         remaining_steps: Managed value LangGraph uses to guard against
-            infinite agent loops.
-        route: Internal scratch field holding the supervisor's most recent
-            routing decision ("music_catalog" | "invoice_info" | "both" |
-            "FINISH"), used only to drive conditional edges. Not part of the
-            three required fields, but needed to make routing explicit and
-            testable.
+            runaway agent loops.
+        route: Internal scratch field holding the supervisor's last decision
+            ("music_catalog" | "invoice_info" | "both" | "FINISH"). Used only
+            to drive conditional edges.
     """
 
     customer_id: str

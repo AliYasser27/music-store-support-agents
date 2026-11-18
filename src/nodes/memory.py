@@ -1,12 +1,13 @@
-"""Long-term memory nodes backed by langgraph.store.memory.InMemoryStore.
+"""Long-term memory nodes, backed by ``langgraph.store.memory.InMemoryStore``.
 
-Preferences are namespaced per customer: ("customer", customer_id,
-"preferences"). We store a single key "summary" holding a concise,
-deduplicated natural-language description of the customer's known music
-preferences (favorite artists/genres).
+Preferences are namespaced per customer under
+``("customer", customer_id, "preferences")`` with a single ``"summary"`` key
+holding a concise description of the customer's favourite artists and genres.
 """
 
 from __future__ import annotations
+
+import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
@@ -16,10 +17,14 @@ from pydantic import BaseModel, Field
 from src.llm import get_llm
 from src.state import State
 
+logger = logging.getLogger(__name__)
+
 _PREFERENCES_KEY = "summary"
+_NO_PREFERENCES = "No preferences on file yet."
 
 
 def _namespace(customer_id: str) -> tuple[str, str, str]:
+    """Return the long-term-memory namespace for a customer."""
     return ("customer", customer_id, "preferences")
 
 
@@ -27,23 +32,21 @@ def load_memory_node(state: State, config: RunnableConfig, *, store: BaseStore) 
     """Load the customer's saved preferences into short-term state.
 
     Args:
-        state: Current graph state (must already contain a verified
-            customer_id).
-        config: LangGraph runnable config (unused here, required by the
-            store-injection calling convention).
-        store: The long-term memory store, auto-injected by LangGraph.
+        state: Current graph state; ``customer_id`` must already be verified.
+        config: LangGraph runnable config (required by the node signature).
+        store: Long-term store, injected by LangGraph.
 
     Returns:
         A partial state update setting ``loaded_memory``.
     """
     customer_id = state.get("customer_id", "")
     if not customer_id:
-        return {"loaded_memory": "No preferences on file yet."}
+        return {"loaded_memory": _NO_PREFERENCES}
 
     item = store.get(_namespace(customer_id), _PREFERENCES_KEY)
     if item and item.value.get("text"):
         return {"loaded_memory": item.value["text"]}
-    return {"loaded_memory": "No preferences on file yet."}
+    return {"loaded_memory": _NO_PREFERENCES}
 
 
 class ExtractedPreferences(BaseModel):
@@ -65,14 +68,16 @@ class ExtractedPreferences(BaseModel):
 def save_memory_node(state: State, config: RunnableConfig, *, store: BaseStore) -> dict:
     """Extract and persist music preferences revealed in the conversation.
 
+    The extraction is best-effort: a failure here is logged and skipped so a
+    memory problem can never break a customer-facing turn.
+
     Args:
         state: Current graph state.
-        config: LangGraph runnable config (unused here).
-        store: The long-term memory store, auto-injected by LangGraph.
+        config: LangGraph runnable config (required by the node signature).
+        store: Long-term store, injected by LangGraph.
 
     Returns:
-        An empty partial state update (this node only has the side effect
-        of writing to the long-term store).
+        An empty partial state update; this node only has a side effect.
     """
     customer_id = state.get("customer_id", "")
     if not customer_id:
@@ -81,15 +86,12 @@ def save_memory_node(state: State, config: RunnableConfig, *, store: BaseStore) 
     existing_item = store.get(_namespace(customer_id), _PREFERENCES_KEY)
     existing_text = existing_item.value.get("text", "") if existing_item else ""
 
-    recent_messages = state["messages"][-6:]
     conversation_snippet = "\n".join(
-        f"{getattr(m, 'type', 'unknown')}: {m.content}"
-        for m in recent_messages
-        if isinstance(m.content, str)
+        f"{getattr(message, 'type', 'unknown')}: {message.content}"
+        for message in state["messages"][-6:]
+        if isinstance(message.content, str)
     )
 
-    llm = get_llm()
-    structured_llm = llm.with_structured_output(ExtractedPreferences)
     extraction_prompt = [
         SystemMessage(
             content=(
@@ -104,9 +106,9 @@ def save_memory_node(state: State, config: RunnableConfig, *, store: BaseStore) 
     ]
 
     try:
-        extracted = structured_llm.invoke(extraction_prompt)
-    except Exception as exc:  # noqa: BLE001 - never let memory extraction crash the turn
-        print(f"[save_memory] preference extraction failed, skipping save: {exc}")
+        extracted = get_llm().with_structured_output(ExtractedPreferences).invoke(extraction_prompt)
+    except Exception as exc:  # noqa: BLE001 - never let memory extraction crash a turn
+        logger.warning("preference extraction failed, skipping save: %s", exc)
         return {}
 
     if extracted.has_preferences and extracted.summary.strip():
@@ -115,5 +117,6 @@ def save_memory_node(state: State, config: RunnableConfig, *, store: BaseStore) 
             _PREFERENCES_KEY,
             {"text": extracted.summary.strip()},
         )
+        logger.info("saved preferences for customer %s", customer_id)
 
     return {}

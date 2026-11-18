@@ -1,8 +1,7 @@
 """Tools for the Invoice Information Sub-Agent.
 
-All tools query the Chinook database via SQLAlchemy using bound
-parameters only -- user-supplied strings are NEVER concatenated directly
-into SQL text.
+Every query uses SQLAlchemy bound parameters; user-supplied text is never
+interpolated into SQL.
 """
 
 from __future__ import annotations
@@ -10,39 +9,21 @@ from __future__ import annotations
 from typing import Any
 
 from langchain_core.tools import tool
-from langgraph.types import interrupt
 from sqlalchemy import text
 
 from src.db import engine
-
-
-def _rows_to_dicts(result) -> list[dict[str, Any]]:
-    """Convert a SQLAlchemy CursorResult into a list of plain dicts."""
-    return [dict(row._mapping) for row in result]
-
-
-def _require_nonblank(value: str, ask: str) -> str:
-    """Ensure a required tool argument is non-blank, interrupting if not.
-
-    See ``music_tools._require_nonblank`` for the identical pattern used
-    here for the Invoice Information Sub-Agent's tools.
-    """
-    if value and str(value).strip():
-        return str(value).strip()
-    reply = interrupt({"question": ask})
-    return str(reply).strip()
+from src.tools._common import require_nonblank, rows_to_dicts
 
 
 @tool
 def get_invoices_by_customer_sorted_by_date(customer_id: str) -> list[dict[str, Any]]:
-    """Return all invoices for a customer, sorted by InvoiceDate descending.
+    """Return all invoices for a customer, most recent first.
 
     Args:
-        customer_id: The Chinook CustomerId (as a string or int-like value).
+        customer_id: The verified Chinook CustomerId.
 
     Returns:
-        A list of dicts with keys: InvoiceId, InvoiceDate, BillingAddress,
-        Total.
+        A list of dicts with keys: InvoiceId, InvoiceDate, BillingAddress, Total.
     """
     query = text(
         """
@@ -53,16 +34,15 @@ def get_invoices_by_customer_sorted_by_date(customer_id: str) -> list[dict[str, 
         """
     )
     with engine.connect() as conn:
-        result = conn.execute(query, {"customer_id": customer_id})
-        return _rows_to_dicts(result)
+        return rows_to_dicts(conn.execute(query, {"customer_id": customer_id}))
 
 
 @tool
 def get_invoices_sorted_by_unit_price(customer_id: str) -> list[dict[str, Any]]:
-    """Return all invoice line items for a customer, sorted by UnitPrice descending.
+    """Return a customer's invoice line items, most expensive first.
 
     Args:
-        customer_id: The Chinook CustomerId (as a string or int-like value).
+        customer_id: The verified Chinook CustomerId.
 
     Returns:
         A list of dicts with keys: InvoiceId, TrackId, UnitPrice, Quantity.
@@ -78,30 +58,26 @@ def get_invoices_sorted_by_unit_price(customer_id: str) -> list[dict[str, Any]]:
         """
     )
     with engine.connect() as conn:
-        result = conn.execute(query, {"customer_id": customer_id})
-        return _rows_to_dicts(result)
+        return rows_to_dicts(conn.execute(query, {"customer_id": customer_id}))
 
 
 @tool
-def get_employee_by_invoice_and_customer(
-    invoice_id: str, customer_id: str
-) -> dict[str, Any]:
-    """Return the support employee associated with a given invoice and customer.
+def get_employee_by_invoice_and_customer(invoice_id: str, customer_id: str) -> dict[str, Any]:
+    """Return the support employee responsible for a given invoice.
 
-    Traverses Customer -> SupportRepId -> Employee, after confirming the
-    invoice belongs to the given customer.
+    The customer condition is part of the query, so one customer cannot read
+    another customer's support-rep details by guessing an invoice id.
 
     Args:
         invoice_id: The Chinook InvoiceId.
-        customer_id: The Chinook CustomerId.
+        customer_id: The verified Chinook CustomerId.
 
     Returns:
-        A dict with keys: FirstName, LastName, Email, Phone, Title. Empty
-        dict if no matching employee/invoice/customer combination exists.
+        A dict with keys FirstName, LastName, Email, Phone, Title, or an empty
+        dict when the invoice does not belong to that customer.
     """
-    invoice_id = _require_nonblank(
-        invoice_id,
-        "Which invoice ID would you like the support contact for?",
+    invoice_id = require_nonblank(
+        invoice_id, "Which invoice ID would you like the support contact for?"
     )
     query = text(
         """
@@ -114,11 +90,10 @@ def get_employee_by_invoice_and_customer(
         """
     )
     with engine.connect() as conn:
-        result = conn.execute(
-            query, {"invoice_id": invoice_id, "customer_id": customer_id}
+        rows = rows_to_dicts(
+            conn.execute(query, {"invoice_id": invoice_id, "customer_id": customer_id})
         )
-        rows = _rows_to_dicts(result)
-        return rows[0] if rows else {}
+    return rows[0] if rows else {}
 
 
 INVOICE_TOOLS = [

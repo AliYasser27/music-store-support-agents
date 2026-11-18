@@ -1,7 +1,7 @@
-"""Human-in-the-loop helper utilities.
+"""Human-in-the-loop prompt helpers.
 
-These helpers wrap ``langgraph.types.interrupt`` so that verification and
-clarification prompts are phrased consistently across the graph.
+Thin wrappers around ``langgraph.types.interrupt`` so every pause in the
+workflow is phrased consistently and carries a machine-readable ``type``.
 """
 
 from __future__ import annotations
@@ -12,11 +12,11 @@ from langgraph.types import interrupt
 
 
 def ask_for_identity() -> str:
-    """Pause the graph and ask the user to verify their identity.
+    """Pause the graph and ask the customer to verify their identity.
 
     Returns:
-        The raw string the user supplies on resume (expected to be a
-        Customer ID, phone number, or email address).
+        The text the customer supplies on resume (a customer id, phone number,
+        or email address).
     """
     payload: dict[str, Any] = {
         "type": "identity_verification",
@@ -29,13 +29,13 @@ def ask_for_identity() -> str:
 
 
 def ask_for_clarification(question: str) -> str:
-    """Pause the graph and ask the user a free-form clarifying question.
+    """Pause the graph and ask a free-form clarifying question.
 
     Args:
-        question: The clarification question to display to the user.
+        question: The question shown to the customer.
 
     Returns:
-        The raw string the user supplies on resume.
+        The text the customer supplies on resume.
     """
     payload: dict[str, Any] = {"type": "clarification", "question": question}
     return str(interrupt(payload)).strip()
