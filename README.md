@@ -20,7 +20,7 @@ Three moments from a live session, in the order they appear:
 2. **Verified request.** The phone number resolves to a Chinook customer, the supervisor routes to `both`, and the merged answer contains the most recent invoice amount and the matching albums.
 3. **Memory recall.** The follow-up — *"List some songs that match my preferences?"* — names no artist. The music specialist answers from the preference summary saved at the end of the previous turn.
 
-The GIF is a 75-second cut of a longer walkthrough; the full recording is available on request.
+The GIF is a 75-second cut. [Watch the full 9-minute walkthrough](https://github.com/AliYasser27/music-store-support-agents/releases/download/demo-v1/music-store-support-agents.mp4) (MP4, 30 MB).
 
 ---
 
