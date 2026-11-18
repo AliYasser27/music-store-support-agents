@@ -26,6 +26,9 @@ test: ## Run the offline test suite (no API key needed)
 test-all: ## Run every test, including the live LLM end-to-end tests
 	$(VENV)/bin/pytest
 
+eval: ## Supervisor routing accuracy against the labelled set (needs GROQ_API_KEY)
+	$(VENV)/bin/python -m evaluation.routing_eval
+
 demo: ## Run the scripted demo (needs GROQ_API_KEY)
 	$(VENV)/bin/python -m src.run --demo
 

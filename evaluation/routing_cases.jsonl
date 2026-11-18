@@ -1,0 +1,26 @@
+{"message": "What albums do you have by the Rolling Stones?", "expected": "music_catalog", "note": "catalog lookup"}
+{"message": "List some songs by AC/DC.", "expected": "music_catalog", "note": "catalog lookup"}
+{"message": "Do you have anything by Miles Davis?", "expected": "music_catalog", "note": "catalog lookup, phrased as a yes/no"}
+{"message": "What jazz songs are in the catalog?", "expected": "music_catalog", "note": "genre listing"}
+{"message": "Is there a song called 'Black Dog'?", "expected": "music_catalog", "note": "song existence"}
+{"message": "Recommend something similar to Led Zeppelin.", "expected": "music_catalog", "note": "recommendation"}
+{"message": "Which genres do you sell?", "expected": "music_catalog", "note": "catalog metadata"}
+{"message": "Show me every album by Iron Maiden.", "expected": "music_catalog", "note": "catalog lookup with an absolute quantifier"}
+{"message": "How much was my most recent purchase?", "expected": "invoice_info", "note": "account data"}
+{"message": "What did I buy last month?", "expected": "invoice_info", "note": "account data, relative date"}
+{"message": "List all my invoices.", "expected": "invoice_info", "note": "account data"}
+{"message": "What was the most expensive track I ever bought?", "expected": "invoice_info", "note": "purchase line items"}
+{"message": "Who was the support rep on invoice 382?", "expected": "invoice_info", "note": "employee lookup"}
+{"message": "What is the total of my biggest invoice?", "expected": "invoice_info", "note": "account data"}
+{"message": "Who is my support representative?", "expected": "invoice_info", "note": "employee lookup, no invoice id given"}
+{"message": "What did I pay for my last order, and who handled it?", "expected": "invoice_info", "note": "two questions, both about invoices - should not route to both"}
+{"message": "How much was my most recent purchase, and what albums do you have by the Rolling Stones?", "expected": "both", "note": "the acceptance scenario"}
+{"message": "Of the albums I have bought, which ones are by AC/DC?", "expected": "both", "note": "needs purchase history and catalog"}
+{"message": "Show my invoice history and recommend a jazz album.", "expected": "both", "note": "explicit request for both"}
+{"message": "Did I buy the album 'No Security', and what did it cost?", "expected": "both", "note": "catalog existence plus purchase price"}
+{"message": "Which tracks did I buy from the Rolling Stones, and do you have their other albums?", "expected": "both", "note": "purchases plus catalog"}
+{"message": "What genres do my purchased tracks belong to?", "expected": "both", "note": "join between purchase history and catalog metadata"}
+{"message": "Thanks, that's all for now.", "expected": "FINISH", "note": "courtesy closer"}
+{"message": "Perfect, no more questions.", "expected": "FINISH", "note": "courtesy closer"}
+{"message": "That answers it - bye.", "expected": "FINISH", "note": "courtesy closer"}
+{"message": "Great, that's everything I needed.", "expected": "FINISH", "note": "courtesy closer"}

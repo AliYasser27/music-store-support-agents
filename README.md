@@ -141,8 +141,24 @@ The suite is split by what it needs, so CI never depends on a paid or rate-limit
 | `test_hitl.py` | `interrupt()` → `Command(resume=...)` contract in a minimal graph | No |
 | `test_graph_structure.py` | Node/edge wiring, conditional routing, import without credentials | No |
 | `test_e2e.py` | The two acceptance scenarios end to end (marked `e2e`) | Yes |
+| `evaluation/` | Labelled routing set (26 messages); the CI test validates the data itself | Data: no, accuracy run: yes |
 
 LLM clients are created lazily, so importing the graph and building it in CI costs nothing. That is deliberately what `test_graph_builds_without_api_key` protects.
+
+### Supervisor routing evaluation
+
+The supervisor is the component whose mistakes are most expensive, so its
+decision is measured separately from answer quality:
+
+```bash
+python -m evaluation.routing_eval        # or: make eval
+```
+
+This runs 26 labelled messages through the real router and reports per-route
+accuracy, writing [`evaluation/results.md`](evaluation/results.md). The dataset
+deliberately includes invoice-only traps and courtesy closers, not just obvious
+cases. Latest recorded run: **92.3% (24/26)**. Methodology and what is *not*
+measured: [`docs/evaluation.md`](docs/evaluation.md).
 
 ---
 
@@ -177,7 +193,8 @@ music-store-support-agents/
 │   ├── nodes/               # verification, memory, HITL prompt helpers
 │   └── tools/               # music and invoice SQL tools
 ├── tests/                   # offline suite + gated e2e suite
-├── docs/                    # architecture notes and demo assets
+├── evaluation/              # labelled routing set + accuracy runner
+├── docs/                    # architecture, evaluation and demo assets
 ├── music_store_customer_support.ipynb
 ├── Makefile                 # make setup / lint / test / demo
 └── .github/workflows/ci.yml # ruff + offline tests on every push
@@ -194,7 +211,7 @@ All settings are optional except the API key. See `.env.example`.
 | Variable | Default | Purpose |
 |---|---|---|
 | `GROQ_API_KEY` | — | **Required.** Groq API key. |
-| `MODEL_NAME` | `llama-3.3-70b-versatile` | Any Groq model that supports tool calling. |
+| `MODEL_NAME` | `openai/gpt-oss-120b` | Any Groq model that supports tool calling. |
 | `CHINOOK_SQL_URL` | official Chinook SQL script | Override to use a local mirror. |
 | `CHINOOK_HTTP_TIMEOUT` | `30` | Download timeout in seconds. |
 
@@ -207,7 +224,7 @@ This is a reference implementation, and the honest list of what it is *not*:
 - **Memory is process-local.** `InMemorySaver` and `InMemoryStore` lose everything on restart. Production would use the Postgres checkpointer and store, keyed by customer rather than thread.
 - **Identity verification is weak.** Knowing a customer's phone number is not authentication. A real deployment needs a one-time code or session token, and audit logging on every lookup.
 - **Phone matching is heuristic.** It normalises separators and compares the last nine digits; unusual international formats may not resolve.
-- **No evaluation harness.** Routing accuracy is currently judged by the e2e tests, not measured over a labelled set. A small prompt-regression suite with per-route assertions is the obvious next step.
+- **Evaluation coverage is narrow.** Routing accuracy is measured on 26 labelled messages; answer correctness and tool selection are only covered by the two end-to-end scenarios. A larger set, a grounded-answer check, and a per-tool evaluation are the next steps.
 - **The database is re-downloaded per process.** Fine for a demo, wasteful for anything deployed; the data should be baked into the image.
 - **LLM calls are not traced.** Adding LangSmith (or OpenTelemetry) tracing would make routing quality and latency observable per turn.
 
